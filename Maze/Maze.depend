@@ -1,0 +1,15 @@
+# depslib dependency file v1.0
+1511125086 source:c:\users\xava\desktop\maze\main.c
+	<stdio.h>
+	<stdlib.h>
+	<windows.h>
+	<conio.h>
+	<time.h>
+
+1511819536 source:f:\maze\main.c
+	<stdio.h>
+	<stdlib.h>
+	<windows.h>
+	<conio.h>
+	<time.h>
+

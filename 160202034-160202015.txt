@@ -1,0 +1,352 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <windows.h>
+#include <conio.h>
+#include <time.h>
+#define MEMORY_ERROR printf("Cannot allocate memory. Exiting.");exit(-1);
+#define COLORER HANDLE hConsole;hConsole=GetStdHandle(STD_OUTPUT_HANDLE);if(colorizeOutput){SetConsoleTextAttribute(hConsole, 10);}
+#define WHITER SetConsoleTextAttribute(hConsole, 7);
+
+//WARNING
+//THIS PROGRAM ONLY RUNS ON WINDOWS.
+
+//RESOURCES
+//IN GETMAZEMAXSIZE FUNCTION:
+//https://stackoverflow.com/questions/6812224/getting-terminal-size-in-c-for-windows
+//IN GETINPUT FUNCTION:
+//https://stackoverflow.com/questions/4214314/get-a-substring-of-a-char
+//WHEN COLORING TEXT
+//https://cboard.cprogramming.com/c-programming/137608-console-colors.html
+
+//STRUCTS
+struct mazeBlock{
+    int value;
+    int index;
+    struct mazeBlock* next;
+};
+
+struct block{
+    struct mazeBlock *mazePointer;
+    int x;
+    int y;
+    struct block* nextBlock;
+};
+
+struct block* lastBlock = NULL;
+struct mazeBlock *lastMazeBlock = NULL;
+struct mazeBlock *maze = NULL;
+
+//SETTINGS
+int printEachStep = 1; //0 or 1
+int enterBeforeUpdate = 1; //0 or 1
+int colorizeOutput = 0; //0 or 1
+int language = 1; //0:TR, 1:EN
+
+//VARIABLES
+int mouse[2]    = {-1,-1},
+    startAt[2]  = {-1,-1},
+    endAt[2]    = {-1,-1},
+    mazeSize[2] = {-1,-1},
+    maxSize[2]  = {99,99},
+    state       = 0;
+char languageStrings[2][6][64] = {{
+        "Labirent boyutunu girin [SATIRxSUTUN] ",
+        "Labirent girisini girin [SATIRxSUTUN]: ",
+        "Labirent cikisini girin [SATIRxSUTUN]: ",
+        "Bu labirentin cozumu yoktur.",
+        "Labirent basariyla cozuldu.",
+        "Cikmak icin bir tusa basin."
+    },{
+        "Enter the maze size [ROWxCOLUMN]",
+        "Enter the maze entry [ROWxCOLUMN]:",
+        "Enter the maze exit [ROWxCOLUMN]:",
+        "This maze has no solution.",
+        "The maze solved successfully.",
+        "Press any key to exit."
+    }};
+
+//FUNCTIONS
+char getInput(int *outputX, int *outputY);
+struct mazeBlock *getMazeBlock(int index);
+void push(struct mazeBlock *mazePointer, int x, int y);
+void pop();
+void lookAround();
+void getMaxMazeSize();
+void getMazeSize();
+void createMaze();
+void printMaze();
+void getMazePoints();
+void findPath();
+
+//MAIN
+int main(){
+    //Randomize numbers each start
+    srand(time(NULL));
+    //Get window dimensions
+    getMaxMazeSize();
+    //Get maze dimensions from user
+    getMazeSize();
+    //Create random maze
+    createMaze();
+    //Print randomized maze
+    printMaze();
+    //Get start and end points from user
+    getMazePoints();
+    //Start searching through maze
+    findPath();
+    return 0;
+}
+
+/*
+ * Function: getInput
+ * ---------------------
+ * Gets input from user & checks if its valid.
+ *
+ * outputX: Part before spesific (x,X, ) character.
+ * outputY: Part after spesific (x,X, ) character.
+ */
+char getInput(int *outputX, int *outputY){
+    char rawSize[256];
+    char leftPart[256];
+    char rightPart[256];
+    char *ptr;
+    int xPos=-1,sLength,i;
+    fgets(rawSize, sizeof(rawSize), stdin);
+    for(i=0;i<sizeof(rawSize);i++){
+        if(rawSize[i]=='x' || rawSize[i]=='X' || rawSize[i]==' '){xPos=i;continue;}
+        if(rawSize[i]=='\0'){sLength=i;break;}
+    }
+    if(xPos!=-1){
+        memcpy(leftPart, &rawSize[0], xPos);
+        leftPart[xPos] = '\0';
+        memcpy(rightPart, &rawSize[xPos+1], sLength);
+        rightPart[sLength] = '\0';
+        *outputX = (int) strtod(leftPart, ptr);
+        *outputY = (int) strtod(rightPart, ptr);
+        return 1;
+    }else{return 0;}
+}
+
+/*
+ * Function: getMazeBlock
+ * --------------
+ * Gets pointer of nth node of link list.
+ *
+ * index: How many times should it call the next node.
+ */
+struct mazeBlock *getMazeBlock(int index){
+    if(index<mazeSize[0]*mazeSize[1] && index>=0){
+        int i;
+        struct mazeBlock *returnBlock = maze;
+        for(i=0;i<index;i++){
+            returnBlock = returnBlock->next;
+        }
+        return returnBlock;
+    }
+    struct mazeBlock* errorBlock = (struct mazeBlock*) malloc(sizeof(struct mazeBlock));
+    if(!errorBlock){MEMORY_ERROR}
+    errorBlock->index = -1;
+    errorBlock->next = NULL;
+    errorBlock->value = 0;
+    return errorBlock;
+}
+
+/*
+ * Function: push
+ * --------------
+ * Allocates new memory block, sets it and connects it with last block.
+ *
+ * mazePointer: Block's pointer from maze matrix.
+ *           x: Block's X Axis.
+ *           y: Block's Y Axis.
+ */
+void push(struct mazeBlock *mazePointer, int x, int y){
+    struct block* block = (struct block*) malloc(sizeof(struct block));
+    if(!block){MEMORY_ERROR}
+    block->nextBlock = lastBlock;
+    block->mazePointer = mazePointer;
+    block->x = x;
+    block->y = y;
+    lastBlock = block;
+}
+
+/*
+ * Function: pop
+ * -------------
+ * Removes last element from linked list stack. If there is nothing to remove,
+ *           makes state -1 (Cannot find maze path)
+ */
+void pop(){
+    struct block* willBeFree = lastBlock;
+    mouse[0] = lastBlock->x;
+    mouse[1] = lastBlock->y;
+    lastBlock = (lastBlock)->nextBlock;
+    free(willBeFree);
+    if(lastBlock==NULL){state=-1;printMaze();}
+}
+
+/*
+ * Function: lookAround (Recursive)
+ * --------------------------------
+ * Looks what it stands on and around it (linear, not diagonal). If it already
+ *           visited them all, goes back.
+ */
+void lookAround(){
+    if(lastBlock->mazePointer==getMazeBlock(endAt[0]*mazeSize[1]+endAt[1])){
+        lastBlock->mazePointer->value = 2;
+        state = 1;
+        if(!printEachStep){printMaze();}
+    }else if(getMazeBlock(lastBlock->mazePointer->index-mazeSize[1])->value==1){
+        lastBlock->mazePointer->value = 2;
+        push(getMazeBlock(lastBlock->mazePointer->index-mazeSize[1]),mouse[0], mouse[1]);
+        mouse[1]--;
+    }else if(getMazeBlock(lastBlock->mazePointer->index+1)->value==1 && mouse[0]!=mazeSize[1]-1){
+        lastBlock->mazePointer->value = 2;
+        push(getMazeBlock(lastBlock->mazePointer->index+1),mouse[0], mouse[1]);
+        mouse[0]++;
+    }else if(getMazeBlock(lastBlock->mazePointer->index+mazeSize[1])->value==1){
+        lastBlock->mazePointer->value = 2;
+        push(getMazeBlock(lastBlock->mazePointer->index+mazeSize[1]),mouse[0], mouse[1]);
+        mouse[1]++;
+    }else if(getMazeBlock(lastBlock->mazePointer->index+-1)->value==1 && mouse[0]!=0){
+        lastBlock->mazePointer->value = 2;
+        push(getMazeBlock(lastBlock->mazePointer->index+-1),mouse[0], mouse[1]);
+        mouse[0]--;
+    }else{
+        lastBlock->mazePointer->value = 3;
+        pop();
+    }
+    if(state==0){
+        if(printEachStep){
+            printMaze();
+            if(enterBeforeUpdate){getch();}
+        }
+        lookAround();
+    }
+}
+
+/*
+ * Function: getMaxMazeSize
+ * --------------------
+ * Gets window size and prepares it for maze if program runs on Windows.
+ */
+void getMaxMazeSize(){
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
+    maxSize[0] = csbi.srWindow.Bottom - csbi.srWindow.Top - 1;
+    maxSize[1] = (csbi.srWindow.Right - csbi.srWindow.Left - 1)/2;
+}
+
+/*
+ * Function: getMazeSize
+ * ---------------------
+ * Gets Maze size from user & allocates memory for maze.
+ */
+void getMazeSize(){
+    int checkInput = 0;
+    do{
+        mazeSize[0] = 0;mazeSize[1] = 0;
+        printf("%s(MAX %dx%d): ", languageStrings[language][0], maxSize[0], maxSize[1]);
+        checkInput = getInput(&mazeSize[0], &mazeSize[1]);
+    }while((mazeSize[0]>maxSize[0] || mazeSize[1]>maxSize[1]) ||
+           (mazeSize[0]<1 || mazeSize[1]<1) || !checkInput);
+    maze = malloc(sizeof(int)*mazeSize[0]*mazeSize[1]);
+    if(!maze){MEMORY_ERROR}
+}
+
+/*
+ * Function: createMaze
+ * --------------------
+ * Creates randomized maze.
+ */
+void createMaze(){
+    int i;
+    for(i=0; i<mazeSize[0]*mazeSize[1]; i++){
+        struct mazeBlock* newBlock = (struct mazeBlock*) malloc(sizeof(struct mazeBlock));
+        if(!newBlock){MEMORY_ERROR}
+        newBlock->value = rand() % 2;
+        newBlock->index = i;
+        if(lastMazeBlock!=NULL){
+            lastMazeBlock->next = newBlock;
+        }
+        lastMazeBlock = newBlock;
+        if(i==0){maze = newBlock;}
+    }
+}
+
+/*
+ * Function: printMaze
+ * --------------------
+ * Prints maze to the terminal.
+ */
+void printMaze(){
+    int i,j;
+    system("cls");
+    printf("  ");
+    COLORER;
+    for(i=1;i<=mazeSize[1];i++){printf("%-2d",i);}
+    WHITER;
+    printf("\n");
+    for(i=0;i<mazeSize[0];i++){
+        COLORER;
+        printf("%2d",i+1);
+        WHITER;
+        for(j=0;j<mazeSize[1];j++){
+            if(j==mouse[0] && i==mouse[1]){
+                printf("%c%c",60,62);
+            }else if(i==endAt[0] && j==endAt[1]){
+                printf("%c%c",247,247);
+            }else{
+            	int tr = getMazeBlock(i*mazeSize[1]+j)->value;
+            	int rt = tr==1?32:tr==2?176:tr==3?250:219;
+            	if(tr==2 && colorizeOutput){
+                    COLORER;
+                    printf("%c%c",219,219);
+                    WHITER;
+            	}else{
+                    printf("%c%c",rt,rt);
+            	}
+            }
+        }
+        printf("\n");
+    }
+}
+
+/*
+ * Function: getMazePoints
+ * -----------------------
+ * Gets Maze start and end points from user.
+ */
+void getMazePoints(){
+    int checkInput = 0;
+    do{
+        printf("%s",languageStrings[language][1]);
+        checkInput = getInput(&startAt[0], &startAt[1]);
+        startAt[0]--;startAt[1]--;
+        mouse[1]=startAt[0];
+        mouse[0]=startAt[1];
+    }while(!(startAt[0]==0 || startAt[1]==0 || startAt[0] == mazeSize[0]-1 || !checkInput
+    	|| startAt[1] == mazeSize[1]-1) || getMazeBlock(startAt[0]*mazeSize[1]+startAt[1])->value==0);
+    printMaze();
+    do{
+        printf("%s",languageStrings[language][2]);
+        checkInput = getInput(&endAt[0], &endAt[1]);
+        endAt[0]--;endAt[1]--;
+    }while(!(endAt[0]==0 || endAt[1]==0 || endAt[0] == mazeSize[0]-1 || !checkInput
+    	|| endAt[1] == mazeSize[1]-1) || getMazeBlock(endAt[0]*mazeSize[1]+endAt[1])->value==0);
+}
+
+/*
+ * Function: findPath
+ * ------------------
+ * Runs lookAround function recursively and waiting it to finish. After it
+             finishes, looks at state and prints the final result.
+ */
+void findPath(){
+    push(getMazeBlock(startAt[0]*mazeSize[1]+startAt[1]), startAt[1], startAt[0]);
+    lookAround();
+    if(state==-1){printf("%s",languageStrings[language][3]);}
+    else{printf("%s",languageStrings[language][4]);}
+    printf(" %s",languageStrings[language][5]);
+    getch();
+}
